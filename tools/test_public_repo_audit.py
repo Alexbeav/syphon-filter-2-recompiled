@@ -52,6 +52,8 @@ class ReleaseAuditTests(unittest.TestCase):
         )
         self.assertIn("-NoDownload:$NoInstallDependencies", setup)
         self.assertIn("-NoInstallDependencies forbids network acquisition", setup)
+        self.assertIn("Assert-PublicDependencyTree", setup)
+        self.assertIn("dependency_trees", setup)
 
     def make_archive(self, extra: dict[str, bytes] | None = None) -> pathlib.Path:
         temp = tempfile.TemporaryDirectory()

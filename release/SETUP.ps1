@@ -130,6 +130,39 @@ function Assert-DiscIdentity {
     }
 }
 
+function Assert-PublicDependencyTree {
+    param([string]$Root, [string]$Label)
+
+    $Forbidden = @(Get-ChildItem -LiteralPath $Root -Recurse -File | Where-Object {
+        $_.Name -match '(?i)\.(mcd|mcr|psxstate|cue|chd|iso|img|ccd|sub|bmp|wav|mp4|mkv)$' -or
+        $_.Name -match '(?i)^SCUS[_-]?944\.(51|92)$' -or
+        $_.FullName -match '(?i)[\\/](captures|traces|saves)[\\/]'
+    })
+    if ($Forbidden.Count) {
+        throw "$Label dependency tree contains private/runtime material: $($Forbidden[0].FullName)"
+    }
+}
+
+function Get-DirectoryIdentity {
+    param([string]$Root)
+
+    $Rows = [Collections.Generic.List[string]]::new()
+    $Bytes = [int64]0
+    $Prefix = $Root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    foreach ($File in Get-ChildItem -LiteralPath $Root -Recurse -File | Sort-Object FullName) {
+        $Relative = $File.FullName.Substring($Prefix.Length).Replace('\', '/')
+        $Hash = Get-Sha256 $File.FullName
+        $Rows.Add("$Relative`t$($File.Length)`t$Hash")
+        $Bytes += $File.Length
+    }
+    $Payload = [Text.Encoding]::UTF8.GetBytes(($Rows -join "`n"))
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $Digest = ([BitConverter]::ToString($Hasher.ComputeHash($Payload)) -replace '-', '').ToLowerInvariant()
+    } finally { $Hasher.Dispose() }
+    return [ordered]@{ files = $Rows.Count; bytes = $Bytes; manifest_sha256 = $Digest }
+}
+
 function Find-Application {
     param([string]$Name, [string[]]$Candidates = @())
 
@@ -602,6 +635,9 @@ Install-PinnedSources -NoDownload:$NoInstallDependencies
 
 Write-Host "== 2/7 verify offline launcher and SDL source closure =="
 Write-Host "All build sources are hash-verified and ready inside this kit." -ForegroundColor Green
+Assert-PublicDependencyTree $Framework "PSXRecomp"
+Assert-PublicDependencyTree $RecompUi "recomp-ui"
+Assert-PublicDependencyTree $SdlRoot "SDL"
 
 if (-not (Test-Path -LiteralPath $SourceProvenancePath -PathType Leaf)) {
     throw "Source provenance is missing: $SourceProvenancePath"
@@ -729,6 +765,11 @@ $BuildInfo = [ordered]@{
     framework_archive_sha256 = $FrameworkSha256
     recomp_ui_archive_sha256 = $RecompUiSha256
     sdl_archive_sha256 = $SdlSha256
+    dependency_trees = [ordered]@{
+        psxrecomp = (Get-DirectoryIdentity $Framework)
+        recomp_ui = (Get-DirectoryIdentity $RecompUi)
+        sdl = (Get-DirectoryIdentity $SdlRoot)
+    }
     openbios_sha256 = $OpenBiosSha256
     openbios_notice_present = $true
     bios_hle_default = $false
