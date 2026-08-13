@@ -1,7 +1,9 @@
 param(
     [string]$CuePath,
+    [string]$Disc2CuePath,
     [string]$Mingw,
     [switch]$ResolveCueOnly,
+    [switch]$VerifyDiscSetOnly,
     [switch]$InstallDependencies,
     [switch]$NoInstallDependencies,
     [switch]$PreflightOnly,
@@ -44,6 +46,13 @@ $SdlSha256 = "12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785"
 $SdlRoot = Join-Path $ToolchainDir "SDL3-$SdlVersion"
 $SetupLog = Join-Path $Kit "setup.log"
 $TranscriptStarted = $false
+$PolicyPath = Join-Path $Kit "BASELINE_POLICY.json"
+$SourceProvenancePath = Join-Path $Kit "SOURCE_PROVENANCE.json"
+
+if (-not (Test-Path -LiteralPath $PolicyPath -PathType Leaf)) {
+    throw "Phase 1 baseline policy is missing: $PolicyPath"
+}
+$Policy = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
 
 function Refresh-ProcessPath {
     $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -64,6 +73,60 @@ function Get-Sha256 {
         }
     } finally {
         $Stream.Dispose()
+    }
+}
+
+function Get-ExpectedDiscHash {
+    param([string]$Key, [string]$Default)
+
+    if ($env:SF2_SETUP_TEST_MODE -eq "1") {
+        $Override = [Environment]::GetEnvironmentVariable("SF2_SETUP_TEST_${Key}_SHA256")
+        if (-not [string]::IsNullOrWhiteSpace($Override)) {
+            return $Override.ToLowerInvariant()
+        }
+    }
+    return $Default.ToLowerInvariant()
+}
+
+function Resolve-CueDataTrack {
+    param([string]$Cue)
+
+    $Text = Get-Content -LiteralPath $Cue -Raw
+    $Matches = [regex]::Matches($Text, '(?im)^\s*FILE\s+"([^"]+)"\s+BINARY\s*$')
+    if ($Matches.Count -ne 1) {
+        throw "Expected one quoted BINARY FILE entry in CUE: $Cue"
+    }
+    $Track = Join-Path (Split-Path $Cue -Parent) $Matches[0].Groups[1].Value
+    if (-not (Test-Path -LiteralPath $Track -PathType Leaf)) {
+        throw "CUE data track not found: $Track"
+    }
+    return (Resolve-Path -LiteralPath $Track).Path
+}
+
+function Assert-DiscIdentity {
+    param([int]$Number, [string]$Cue)
+
+    $Disc = @($Policy.discs | Where-Object { [int]$_.number -eq $Number })
+    if ($Disc.Count -ne 1) { throw "Baseline policy does not define Disc $Number exactly once." }
+    $CueHash = Get-Sha256 $Cue
+    $Track = Resolve-CueDataTrack $Cue
+    $TrackHash = Get-Sha256 $Track
+    $ExpectedCue = Get-ExpectedDiscHash "DISC${Number}_CUE" ([string]$Disc[0].cue_sha256)
+    $ExpectedTrack = Get-ExpectedDiscHash "DISC${Number}_BIN" ([string]$Disc[0].bin_sha256)
+    if ($CueHash -ne $ExpectedCue) {
+        throw "Disc $Number CUE identity mismatch. Expected $ExpectedCue, got $CueHash."
+    }
+    if ($TrackHash -ne $ExpectedTrack) {
+        throw "Disc $Number data-track identity mismatch. Expected $ExpectedTrack, got $TrackHash."
+    }
+    Write-Host "Verified Disc $Number $($Disc[0].serial): CUE $CueHash; data track $TrackHash" -ForegroundColor Green
+    return [pscustomobject]@{
+        Number = $Number
+        Serial = [string]$Disc[0].serial
+        Cue = $Cue
+        CueSha256 = $CueHash
+        Track = $Track
+        TrackSha256 = $TrackHash
     }
 }
 
@@ -226,7 +289,8 @@ function Install-VerifiedArtifact {
         [string]$ArchiveName,
         [string]$Destination,
         [string]$ArchiveRoot,
-        [string[]]$RequiredFiles
+        [string[]]$RequiredFiles,
+        [switch]$NoDownload
     )
 
     $Receipt = Join-Path $Destination ".sf2-artifact-sha256"
@@ -242,6 +306,10 @@ function Install-VerifiedArtifact {
     if ($Complete) {
         Write-Host "$Label already verified inside this kit." -ForegroundColor Green
         return
+    }
+
+    if ($NoDownload) {
+        throw "$Label is missing or failed its receipt check. -NoInstallDependencies forbids network acquisition; pre-populate the exact verified dependency closure."
     }
 
     $Downloads = Join-Path $ToolchainDir "downloads"
@@ -351,15 +419,17 @@ function Install-PinnedPython {
 }
 
 function Install-PinnedSources {
+    param([switch]$NoDownload)
+
     Install-VerifiedArtifact "FRAMEWORK" "PSXRecomp source $FrameworkRef" $FrameworkUrl $FrameworkSha256 `
         $FrameworkArchiveName $Framework "psxrecomp-$FrameworkRef" `
-        @("runtime\runtime.cmake", "bios\OpenBIOS.toml", "LICENSE")
+        @("runtime\runtime.cmake", "bios\OpenBIOS.toml", "LICENSE") -NoDownload:$NoDownload
     Install-VerifiedArtifact "RECOMP_UI" "PSXRecomp launcher source $RecompUiRef" $RecompUiUrl $RecompUiSha256 `
         $RecompUiArchiveName $RecompUi "recomp-ui-$RecompUiRef" `
-        @("recomp_ui.cmake", "src\recomp_launcher.h", "README.md")
+        @("recomp_ui.cmake", "src\recomp_launcher.h", "README.md") -NoDownload:$NoDownload
     Install-VerifiedArtifact "SDL3" "SDL $SdlVersion source" $SdlUrl $SdlSha256 `
         $SdlArchiveName $SdlRoot "SDL3-$SdlVersion" `
-        @("CMakeLists.txt", "include\SDL3\SDL.h", "LICENSE.txt")
+        @("CMakeLists.txt", "include\SDL3\SDL.h", "LICENSE.txt") -NoDownload:$NoDownload
 }
 
 function Invoke-Python {
@@ -427,7 +497,7 @@ if ($PreflightOnly -or $DependenciesOnly) {
     }
     Show-ToolSummary $Tools
     if ($DependenciesOnly) {
-        Install-PinnedSources
+        Install-PinnedSources -NoDownload:$NoInstallDependencies
         Write-Host "Pinned dependency closure is ready." -ForegroundColor Green
     }
     if ($TranscriptStarted) { Stop-Transcript | Out-Null }
@@ -460,10 +530,37 @@ if ($ResolveCueOnly) {
     exit 0
 }
 
+if ([string]::IsNullOrWhiteSpace($Disc2CuePath)) {
+    $Disc2Cues = @(Get-ChildItem -LiteralPath $Kit -File -Filter "*.cue" |
+        Where-Object { $_.BaseName -match '(?i)disc\s*2' })
+    if ($Disc2Cues.Count -ne 1) {
+        $Found = if ($Disc2Cues.Count) {
+            ($Disc2Cues.FullName | ForEach-Object { "  $_" }) -join [Environment]::NewLine
+        } else { "  (none)" }
+        throw "Could not uniquely find Disc 2 beside SETUP.ps1. Found:`n$Found`nRun SETUP.ps1 -CuePath <Disc 1.cue> -Disc2CuePath <Disc 2.cue>."
+    }
+    $Disc2CuePath = $Disc2Cues[0].FullName
+    Write-Host "Auto-detected Disc 2: $Disc2CuePath"
+}
+if (-not (Test-Path -LiteralPath $Disc2CuePath -PathType Leaf)) {
+    throw "Disc 2 CUE not found: $Disc2CuePath"
+}
+$Disc2CuePath = (Resolve-Path -LiteralPath $Disc2CuePath).Path
+if ($CuePath -eq $Disc2CuePath) { throw "Disc 1 and Disc 2 must be different CUE files." }
+
 # play.bat is deliberately ASCII+CRLF for cmd.exe compatibility. Reject paths
 # that would otherwise be silently replaced with '?' before doing a long build.
 Assert-AsciiLauncherPath $Kit "The extracted kit path"
 Assert-AsciiLauncherPath $CuePath "The Disc 1 CUE path"
+Assert-AsciiLauncherPath $Disc2CuePath "The Disc 2 CUE path"
+
+$Disc1Identity = Assert-DiscIdentity 1 $CuePath
+$Disc2Identity = Assert-DiscIdentity 2 $Disc2CuePath
+if ($VerifyDiscSetOnly) {
+    Write-Host "Exact two-disc input policy passed." -ForegroundColor Green
+    if ($TranscriptStarted) { Stop-Transcript | Out-Null }
+    exit 0
+}
 
 Write-Host "== 0/7 prepare build tools =="
 $Tools = Resolve-SetupTools $Mingw
@@ -501,10 +598,46 @@ if ($Tools.Python.Prefix.Count) {
 $env:PATH = "$(Split-Path $Tools.Mingw.Gcc -Parent);$(Split-Path $Tools.Python.File -Parent);$env:PATH"
 
 Write-Host "== 1/7 acquire pinned, verified PSXRecomp source =="
-Install-PinnedSources
+Install-PinnedSources -NoDownload:$NoInstallDependencies
 
 Write-Host "== 2/7 verify offline launcher and SDL source closure =="
 Write-Host "All build sources are hash-verified and ready inside this kit." -ForegroundColor Green
+
+if (-not (Test-Path -LiteralPath $SourceProvenancePath -PathType Leaf)) {
+    throw "Source provenance is missing: $SourceProvenancePath"
+}
+$SourceProvenance = Get-Content -LiteralPath $SourceProvenancePath -Raw | ConvertFrom-Json
+if ([string]$SourceProvenance.selected_source_base -ne [string]$Policy.selected_source_base -or
+    [string]$SourceProvenance.source_commit -notmatch '^[0-9a-f]{40}$' -or
+    [string]$SourceProvenance.source_tree -notmatch '^[0-9a-f]{40}$') {
+    throw "Source provenance does not bind the selected Phase 1 base and exact product source."
+}
+$ConfigText = Get-Content -LiteralPath (Join-Path $Kit "game.toml") -Raw
+$SettingsText = Get-Content -LiteralPath (Join-Path $Kit "settings.toml") -Raw
+if ($ConfigText -notmatch '(?m)^bios_hle\s*=\s*false\s*$' -or
+    $ConfigText -notmatch '(?m)^fast_boot\s*=\s*false\s*$' -or
+    $ConfigText -notmatch '(?m)^aspect_ratio\s*=\s*"4:3"\s*$' -or
+    $ConfigText -notmatch '(?m)^pgxp\s*=\s*false\s*$' -or
+    $ConfigText -notmatch '(?ms)^\[controller\.mouse_camera\]\s*\r?\n\s*enabled\s*=\s*false\s*$' -or
+    $ConfigText -notmatch '(?ms)^\[widescreen\]\s*\r?\n\s*offer\s*=\s*false\s*$') {
+    throw "game.toml violates the faithful Phase 1 BIOS, fast-boot, 4:3, or default-off enhancement policy."
+}
+if ($SettingsText -notmatch '(?m)^supersampling\s*=\s*1\s*$' -or
+    $SettingsText -notmatch '(?m)^antialiasing\s*=\s*false\s*$' -or
+    $SettingsText -notmatch '(?m)^aspect_ratio\s*=\s*"4:3"\s*$' -or
+    $SettingsText -notmatch '(?m)^frame_interpolation\s*=\s*false\s*$') {
+    throw "settings.toml violates the faithful Phase 1 presentation policy."
+}
+$OpenBios = Join-Path $Framework "bios\openbios.bin"
+$OpenBiosNotice = Join-Path $Framework "bios\OpenBIOS.LICENSE"
+if (-not (Test-Path -LiteralPath $OpenBios -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $OpenBiosNotice -PathType Leaf)) {
+    throw "The pinned OpenBIOS image or license notice is missing."
+}
+$OpenBiosSha256 = Get-Sha256 $OpenBios
+if ($OpenBiosSha256 -ne [string]$Policy.bios.sha256) {
+    throw "OpenBIOS identity mismatch. Expected $($Policy.bios.sha256), got $OpenBiosSha256."
+}
 
 Write-Host "== 3/7 extract and verify SCUS_944.51 from your Disc 1 =="
 New-Item -ItemType Directory -Force $InputDir | Out-Null
@@ -565,15 +698,67 @@ if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
 $Cue = $CuePath
 $Config = Join-Path $Kit "game.toml"
 $Launcher = Join-Path $Kit "play.bat"
+$BuildBios = Join-Path $BuildDir "bios\openbios.bin"
+if (-not (Test-Path -LiteralPath $BuildBios -PathType Leaf) -or
+    (Get-Sha256 $BuildBios) -ne $OpenBiosSha256) {
+    throw "The built launcher directory does not contain the exact accepted OpenBIOS image."
+}
 $LauncherText = @"
 @echo off
 set "PSX_OVERLAY_AUTOCOMPILE_OFF=1"
 set "PSX_NATIVE_RANK_LIMIT=0"
 cd /d "$BuildDir"
-start "Syphon Filter 2 Recompiled" "$Exe" --game "$Config" --disc "$Cue" --memcard-dir "$BuildSaves" --launcher
+start "Syphon Filter 2 Recompiled" "$Exe" --launcher --renderer opengl --game "$Config" --disc "$Cue" --bios "$BuildBios" --memcard-dir "$BuildSaves"
 "@
 $LauncherText = ($LauncherText -replace "`r?`n", "`r`n")
 [IO.File]::WriteAllText($Launcher, $LauncherText, [Text.Encoding]::ASCII)
+
+$BuildInfo = [ordered]@{
+    schema = "sf2-local-build-v1"
+    title = "Syphon Filter 2"
+    region = "USA"
+    selected_source_base = [string]$SourceProvenance.selected_source_base
+    source_commit = [string]$SourceProvenance.source_commit
+    source_tree = [string]$SourceProvenance.source_tree
+    source_provenance_sha256 = (Get-Sha256 $SourceProvenancePath)
+    discs = @(
+        [ordered]@{ number = 1; serial = $Disc1Identity.Serial; cue_sha256 = $Disc1Identity.CueSha256; bin_sha256 = $Disc1Identity.TrackSha256 },
+        [ordered]@{ number = 2; serial = $Disc2Identity.Serial; cue_sha256 = $Disc2Identity.CueSha256; bin_sha256 = $Disc2Identity.TrackSha256 }
+    )
+    retail_executable_sha256 = [string]$Policy.discs[0].boot_executable_sha256
+    framework_archive_sha256 = $FrameworkSha256
+    recomp_ui_archive_sha256 = $RecompUiSha256
+    sdl_archive_sha256 = $SdlSha256
+    openbios_sha256 = $OpenBiosSha256
+    openbios_notice_present = $true
+    bios_hle_default = $false
+    fast_boot_default = $false
+    aspect_ratio_default = "4:3"
+    retail_world_update_hz = 20
+    controller_mode = "digital"
+    mouse_camera_default = $false
+    optional_enhancements_default = $false
+    toolchain = [ordered]@{
+        python_sha256 = (Get-Sha256 $Tools.Python.File)
+        cmake_sha256 = (Get-Sha256 $Tools.Mingw.CMake)
+        ninja_sha256 = (Get-Sha256 $Tools.Mingw.Ninja)
+        c_compiler_sha256 = (Get-Sha256 $Tools.Mingw.Gcc)
+        cxx_compiler_sha256 = (Get-Sha256 $Tools.Mingw.Gxx)
+    }
+    game_config_sha256 = (Get-Sha256 $Config)
+    settings_sha256 = (Get-Sha256 (Join-Path $BuildDir "settings.toml"))
+    keybinds_sha256 = (Get-Sha256 (Join-Path $BuildDir "keybinds.ini"))
+    executable_sha256 = (Get-Sha256 $Exe)
+    launcher_sha256 = (Get-Sha256 $Launcher)
+    owned_paths_recorded = $false
+    retail_bytes_redistributable = $false
+    generated_game_code_redistributable = $false
+    completed_at_utc = [DateTime]::UtcNow.ToString("o")
+}
+[IO.File]::WriteAllText(
+    (Join-Path $Kit "SF2_LOCAL_BUILD_INFO.json"),
+    ($BuildInfo | ConvertTo-Json -Depth 6) + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false))
 
 Write-Host ""
 Write-Host "Setup complete. Run play.bat to open the PSXRecomp launcher." -ForegroundColor Green

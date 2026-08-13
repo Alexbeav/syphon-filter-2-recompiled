@@ -24,8 +24,9 @@ game. It contains the compiler/runtime tools and this project's verified
 recipe, but no executable containing SF2 code.
 
 1. Download `syphon-filter-2-recompiled-kit-windows-x64.zip` from Releases.
-2. Put your legally obtained SCUS-94451 Disc 1 `.cue`/`.bin` files beside the
-   extracted kit files. Disc 2 may be present too.
+2. Put the exact legally obtained USA Disc 1 (SCUS-94451) and Disc 2
+   (SCUS-94492) `.cue`/`.bin` pairs beside the extracted kit files. The Phase 1
+   baseline fails closed if either disc is absent or has the wrong identity.
 3. Double-click `SETUP.bat`. It auto-detects Disc 1, downloads pinned and
    SHA-256-verified WinLibs, Python, PSXRecomp, launcher, and SDL source
    archives directly, builds locally, and opens the graphical launcher.
@@ -38,7 +39,8 @@ If automatic selection is ambiguous, use PowerShell:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\SETUP.ps1 `
-  -CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 1).cue"
+  -CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 1).cue" `
+  -Disc2CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 2).cue"
 ```
 
 Future runs use the generated `play.bat`. The launcher owns disc selection,
@@ -59,11 +61,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\SETUP.ps1 `
 
 Rerunning setup reuses a dependency only when its receipt and required files
 still match. Hash failures remove the untrusted download before extraction.
+`-NoInstallDependencies` is a strict offline mode: it refuses every missing or
+unverified tool/source dependency before any download can start.
 
 Extraction, hash verification, game/BIOS recompilation, and the native build
 all occur locally from your files. Never redistribute the setup output.
 
 ## Current status
+
+The standardized Phase 1 profile is promoted only as launcher-ready. It does
+not add a new mission, campaign, enhancement, full-game, or release-readiness
+claim. The historical v0.1.2 playthrough record below remains a prior control.
 
 | Area | Status |
 |---|---|

@@ -1,0 +1,43 @@
+{
+  "schema": "sf2-phase1-baseline-policy-v1",
+  "title": "Syphon Filter 2",
+  "region": "USA",
+  "selected_source_base": "e08aaff871a5c9b4a7756a6ed6fe99c98c4dbc0f",
+  "discs": [
+    {
+      "number": 1,
+      "serial": "SCUS-94451",
+      "cue_sha256": "3b29a42696ae345db5cdd6de71131b3054144f17c35b48cfd4a17c571a6c6b45",
+      "bin_sha256": "e52dbc28b02046a14863863d51d92f95cbf2d9e9dd36bf91246f1ac0999a69e4",
+      "boot_executable": "SCUS_944.51;1",
+      "boot_executable_sha256": "75a360bf7465dfdec85c14f9ba93862aae2531b48d83fd8d82ba8c9fffa13d33"
+    },
+    {
+      "number": 2,
+      "serial": "SCUS-94492",
+      "cue_sha256": "1873046c78d57dc8d1b1f994d68b6ce1e6a6a5b9a63ec1d5eb0b18da4dec8129",
+      "bin_sha256": "673f9a41d4070952526555cccc83c0b5e6152d915c3b181c323df68dea70f06a",
+      "boot_executable": "SCUS_944.92;1",
+      "boot_executable_sha256": "75a360bf7465dfdec85c14f9ba93862aae2531b48d83fd8d82ba8c9fffa13d33"
+    }
+  ],
+  "bios": {
+    "name": "PCSX-Redux OpenBIOS",
+    "mode": "LLE",
+    "sha256": "fabe498fbf224e4721f12f31b6f5fe0659205e341dc4e5c5f91b9bd1a1011c57",
+    "bios_hle": false
+  },
+  "fast_boot": false,
+  "defaults": {
+    "aspect_ratio": "4:3",
+    "retail_world_update_hz": 20,
+    "controller_mode": "digital",
+    "supersampling": 1,
+    "antialiasing": false,
+    "pgxp": false,
+    "widescreen": false,
+    "mouse_camera": false,
+    "frame_interpolation": false
+  },
+  "scope": "launcher-ready baseline only"
+}

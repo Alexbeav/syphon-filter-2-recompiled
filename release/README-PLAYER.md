@@ -5,9 +5,10 @@ native Windows x64 program using PSXRecomp, bootstrapped from SCUS-94451. It
 contains no game executable, generated game/BIOS code, game assets, Sony BIOS,
 saves, or overlay captures.
 
-You must provide your legally obtained Disc 1 `.cue` plus its `.bin` track
-files. The runtime uses PSXRecomp's bundled MIT-licensed OpenBIOS backend; a
-Sony BIOS dump is not required.
+You must provide the exact legally obtained USA Disc 1 (SCUS-94451) and Disc 2
+(SCUS-94492) `.cue` plus `.bin` track pairs. Setup fails closed if either disc
+is absent or has the wrong identity. The runtime uses PSXRecomp's bundled
+MIT-licensed OpenBIOS backend; a Sony BIOS dump is not required.
 
 The setup script extracts and hash-checks `SCUS_944.51`, regenerates the game
 and OpenBIOS backends locally, builds the runtime and the real PSXRecomp
@@ -28,9 +29,9 @@ remains reliable on lower-memory systems. Advanced users can pass
 
 ## Easiest setup
 
-Put the extracted kit, the Disc 1 `.cue`, and its `.bin` file(s) in the same
-folder. Disc 2 can be there too: setup specifically selects the CUE whose name
-contains `Disc 1`. Then double-click:
+Put the extracted kit and both complete disc pairs in the same folder. Setup
+selects the CUE names containing `Disc 1` and `Disc 2`, then verifies both
+exact CUE and data-track identities. Then double-click:
 
 ```text
 SETUP.bat
@@ -53,7 +54,8 @@ kit and choose the CUE explicitly:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\SETUP.ps1 `
-  -CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 1).cue"
+  -CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 1).cue" `
+  -Disc2CuePath "D:\PS1\Syphon Filter 2 (USA) (Disc 2).cue"
 ```
 
 The script recognizes `python` or the Windows `py` launcher and checks standard
@@ -62,8 +64,14 @@ older WinGet WinLibs layouts, and its kit-local verified toolchain. Downloads
 are capped at 30 minutes; extraction stops with a useful error after 15
 minutes. You can override the compiler with
 `-Mingw "D:\Tools\mingw64"`, or use `-NoInstallDependencies` for a strictly
-manual/offline preflight. Do not move individual files out of the extracted
-kit. Memory cards are stored under `out\release\saves`.
+strict offline execution. This mode refuses every missing or unverified
+dependency before any download can start. Do not move individual files out of
+the extracted kit. Memory cards are stored under `out\release\saves`.
+
+The standardized default is OpenBIOS LLE with BIOS HLE and fast boot disabled,
+native 4:3, retail 20 Hz world timing, digital controller availability, and
+supersampling, antialiasing, widescreen, PGXP, mouse camera, and interpolation
+disabled. Existing optional Mods remain available in the launcher.
 
 ## Dependency-only check
 

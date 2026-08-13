@@ -11,11 +11,20 @@ import unittest
 import zipfile
 import hashlib
 import importlib.util
+import json
 
 import public_repo_audit as audit
 
 
 class ReleaseAuditTests(unittest.TestCase):
+    def copy_setup_fixture(self, root: pathlib.Path) -> pathlib.Path:
+        source_root = pathlib.Path(__file__).parents[1]
+        setup = source_root / "release" / "SETUP.ps1"
+        shutil.copy2(setup, root / "SETUP.ps1")
+        shutil.copy2(source_root / "release" / "BASELINE_POLICY.json",
+                     root / "BASELINE_POLICY.json")
+        return root / "SETUP.ps1"
+
     def test_runtime_build_has_bounded_parallelism(self) -> None:
         setup = (pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1").read_text(
             encoding="utf-8"
@@ -24,6 +33,26 @@ class ReleaseAuditTests(unittest.TestCase):
         self.assertIn("--parallel $BuildJobs", setup)
         self.assertNotIn("--target psx-runtime --parallel\n", setup)
 
+    def test_phase1_policy_is_faithful_and_two_disc(self) -> None:
+        root = pathlib.Path(__file__).parents[1]
+        policy = json.loads((root / "release" / "BASELINE_POLICY.json").read_text())
+        self.assertEqual([disc["serial"] for disc in policy["discs"]],
+                         ["SCUS-94451", "SCUS-94492"])
+        self.assertFalse(policy["fast_boot"])
+        self.assertFalse(policy["bios"]["bios_hle"])
+        self.assertEqual(policy["defaults"]["aspect_ratio"], "4:3")
+        self.assertFalse(policy["defaults"]["pgxp"])
+        self.assertFalse(policy["defaults"]["widescreen"])
+        self.assertFalse(policy["defaults"]["mouse_camera"])
+        self.assertFalse(policy["defaults"]["frame_interpolation"])
+
+    def test_noinstall_mode_gates_all_dependency_downloads(self) -> None:
+        setup = (pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("-NoDownload:$NoInstallDependencies", setup)
+        self.assertIn("-NoInstallDependencies forbids network acquisition", setup)
+
     def make_archive(self, extra: dict[str, bytes] | None = None) -> pathlib.Path:
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -31,6 +60,31 @@ class ReleaseAuditTests(unittest.TestCase):
         files = {name: b"safe" for name in audit.ALLOWED_KIT_FILES}
         if extra:
             files.update(extra)
+        source = {
+            "selected_source_base": "e08aaff871a5c9b4a7756a6ed6fe99c98c4dbc0f",
+            "source_commit": "0" * 40,
+            "source_tree": "1" * 40,
+        }
+        files["SOURCE_PROVENANCE.json"] = json.dumps(source).encode()
+        files["BASELINE_POLICY.json"] = json.dumps({
+            "fast_boot": False,
+            "bios": {"bios_hle": False},
+            "discs": [{"number": 1}, {"number": 2}],
+        }).encode()
+        manifest_files = []
+        for name, data in sorted(files.items()):
+            if name == "PACKAGE_MANIFEST.json":
+                continue
+            manifest_files.append({
+                "path": name,
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            })
+        files["PACKAGE_MANIFEST.json"] = json.dumps({
+            "schema": "sf2-owned-input-package-v1",
+            "source": source,
+            "files": manifest_files,
+        }).encode()
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
             for name, data in files.items():
                 zf.writestr(name, data)
@@ -118,8 +172,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_auto_detects_disc1_beside_disc2(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             disc1 = root / "Syphon Filter 2 (USA) (Disc 1).cue"
             disc2 = root / "Syphon Filter 2 (USA) (Disc 2).cue"
             disc1.write_text("FILE disc1.bin BINARY\n", encoding="ascii")
@@ -141,8 +194,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_preflight_accepts_py_launcher_without_python_on_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             fake_bin = root / "toolchain" / "bin"
             fake_bin.mkdir(parents=True)
             for name in ("git", "cmake", "gcc", "g++", "ninja", "py"):
@@ -168,8 +220,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_preflight_names_missing_python(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             fake_bin = root / "toolchain" / "bin"
             fake_bin.mkdir(parents=True)
             for name in ("git", "cmake", "gcc", "g++", "ninja"):
@@ -194,8 +245,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_installs_verified_winlibs_without_winget(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             fake_bin = root / "existing-tools"
             fake_bin.mkdir()
             for name in ("git", "cmake", "py"):
@@ -234,8 +284,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_rejects_unverified_winlibs_before_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             fake_bin = root / "existing-tools"
             fake_bin.mkdir()
             for name in ("git", "cmake", "py"):
@@ -269,8 +318,7 @@ class ReleaseAuditTests(unittest.TestCase):
     def test_setup_acquires_verified_source_closure_without_git(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             fake_bin = root / "existing-tools"
             fake_bin.mkdir()
             for name in ("cmake", "gcc", "g++", "ninja", "py"):
@@ -307,7 +355,7 @@ class ReleaseAuditTests(unittest.TestCase):
             result = subprocess.run(
                 [shutil.which("powershell"), "-NoProfile", "-ExecutionPolicy", "Bypass",
                  "-File", str(root / "SETUP.ps1"), "-DependenciesOnly",
-                 "-NoInstallDependencies"],
+                 "-InstallDependencies"],
                 check=False, text=True, encoding="utf-8", errors="replace",
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
             )
@@ -321,19 +369,51 @@ class ReleaseAuditTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"),
                          "Windows PowerShell is unavailable")
+    def test_setup_verifies_both_exact_disc_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            self.copy_setup_fixture(root)
+            disc1_bin = root / "Disc 1.bin"
+            disc2_bin = root / "Disc 2.bin"
+            disc1_bin.write_bytes(b"disc-one-fixture")
+            disc2_bin.write_bytes(b"disc-two-fixture")
+            disc1 = root / "Syphon Filter 2 (USA) (Disc 1).cue"
+            disc2 = root / "Syphon Filter 2 (USA) (Disc 2).cue"
+            disc1.write_bytes(b'FILE "Disc 1.bin" BINARY\r\n')
+            disc2.write_bytes(b'FILE "Disc 2.bin" BINARY\r\n')
+            env = os.environ.copy()
+            env["SF2_SETUP_TEST_MODE"] = "1"
+            env["SF2_SETUP_TEST_DISC1_CUE_SHA256"] = hashlib.sha256(disc1.read_bytes()).hexdigest()
+            env["SF2_SETUP_TEST_DISC1_BIN_SHA256"] = hashlib.sha256(disc1_bin.read_bytes()).hexdigest()
+            env["SF2_SETUP_TEST_DISC2_CUE_SHA256"] = hashlib.sha256(disc2.read_bytes()).hexdigest()
+            env["SF2_SETUP_TEST_DISC2_BIN_SHA256"] = hashlib.sha256(disc2_bin.read_bytes()).hexdigest()
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-File", str(root / "SETUP.ps1"),
+                 "-CuePath", str(disc1), "-Disc2CuePath", str(disc2),
+                 "-VerifyDiscSetOnly"],
+                check=False, text=True, encoding="utf-8", errors="replace",
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("Exact two-disc input policy passed", result.stdout)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"),
+                         "Windows PowerShell is unavailable")
     def test_setup_rejects_non_ascii_launcher_path_before_tool_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp) / "Γιώργος"
             root.mkdir()
-            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
-            shutil.copy2(setup, root / "SETUP.ps1")
+            self.copy_setup_fixture(root)
             cue = root / "Syphon Filter 2 (USA) (Disc 1).cue"
             cue.write_text("FILE disc1.bin BINARY\n", encoding="ascii")
+            disc2 = root / "Syphon Filter 2 (USA) (Disc 2).cue"
+            disc2.write_text("FILE disc2.bin BINARY\n", encoding="ascii")
             env = os.environ.copy()
             env["SF2_SETUP_DISABLE_STANDARD_DISCOVERY"] = "1"
             result = subprocess.run(
                 [shutil.which("pwsh"), "-NoProfile", "-File", str(root / "SETUP.ps1"),
-                 "-CuePath", str(cue), "-NoInstallDependencies"],
+                 "-CuePath", str(cue), "-Disc2CuePath", str(disc2),
+                 "-NoInstallDependencies"],
                 check=False, text=True, encoding="utf-8", errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, env=env,

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import pathlib
 import re
 import subprocess
@@ -52,6 +53,9 @@ ALLOWED_KIT_FILES = {
     "mods/packages/sf2.enhancements/1.0.0/manifest.toml",
     "LICENSE-psxrecomp",
     "THIRD_PARTY_ATTRIBUTION.md",
+    "BASELINE_POLICY.json",
+    "SOURCE_PROVENANCE.json",
+    "PACKAGE_MANIFEST.json",
     "psxrecomp-cli/psxrecomp.exe",
     "psxrecomp-cli/libexec/psxrecomp-game.exe",
     "psxrecomp-cli/libexec/psxrecomp-bios.exe",
@@ -140,6 +144,7 @@ def audit_archive(archive: pathlib.Path) -> int:
             and all(len(pathlib.PurePosixPath(name).parts) > 1 for name in raw_files)
         )
         files: set[str] = set()
+        payloads: dict[str, bytes] = {}
         for info in zf.infolist():
             name = info.filename.replace("\\", "/").lstrip("./")
             if not name or name.endswith("/"):
@@ -157,6 +162,7 @@ def audit_archive(archive: pathlib.Path) -> int:
             if info.file_size > MAX_RELEASE_BYTES:
                 errors.append(f"oversized release entry: {name}")
             data = zf.read(info)
+            payloads[rel] = data
             if rel.lower().endswith(".bat"):
                 try:
                     data.decode("ascii")
@@ -176,6 +182,39 @@ def audit_archive(archive: pathlib.Path) -> int:
         missing = ALLOWED_KIT_FILES - files
         if missing:
             errors.append("missing kit files: " + ", ".join(sorted(missing)))
+        try:
+            manifest = json.loads(payloads["PACKAGE_MANIFEST.json"].decode("utf-8"))
+            if manifest.get("schema") != "sf2-owned-input-package-v1":
+                errors.append("package manifest schema mismatch")
+            rows = manifest.get("files", [])
+            declared = {row["path"]: row for row in rows}
+            expected = files - {"PACKAGE_MANIFEST.json"}
+            if set(declared) != expected:
+                errors.append("package manifest file set does not match archive")
+            for name in sorted(set(declared) & expected):
+                row = declared[name]
+                data = payloads[name]
+                if row.get("size") != len(data):
+                    errors.append(f"package manifest size mismatch: {name}")
+                if row.get("sha256") != hashlib.sha256(data).hexdigest():
+                    errors.append(f"package manifest hash mismatch: {name}")
+            source = manifest.get("source", {})
+            if source.get("selected_source_base") != (
+                    "e08aaff871a5c9b4a7756a6ed6fe99c98c4dbc0f"):
+                errors.append("package manifest selected source base mismatch")
+            if not re.fullmatch(r"[0-9a-f]{40}", source.get("source_commit", "")):
+                errors.append("package manifest source commit is invalid")
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid package manifest: {exc}")
+
+        try:
+            policy = json.loads(payloads["BASELINE_POLICY.json"].decode("utf-8"))
+            if policy.get("fast_boot") is not False or policy.get("bios", {}).get("bios_hle") is not False:
+                errors.append("baseline policy must disable BIOS HLE and fast boot")
+            if len(policy.get("discs", [])) != 2:
+                errors.append("baseline policy must identify exactly two discs")
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid baseline policy: {exc}")
     if total > MAX_RELEASE_BYTES:
         errors.append(f"release expands to {total} bytes (limit {MAX_RELEASE_BYTES})")
     print(f"release archive: {archive} ({total} uncompressed bytes)")

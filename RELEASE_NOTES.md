@@ -1,5 +1,11 @@
 # v0.1.2-alpha
 
+The later Phase 1 standardized baseline keeps this release as its prior
+control. Its exact launcher profile requires both USA discs, OpenBIOS LLE,
+BIOS HLE off, fast boot off, native 4:3, retail timing, controller input, and
+all optional enhancements off by default. The Phase 1 work promotes only a
+launcher-ready baseline and makes no new campaign or enhancement claim.
+
 Setup-reliability update for the complete two-disc Syphon Filter 2 (USA)
 campaign. Game behavior and the accepted optional Mods are unchanged from
 `v0.1.1-alpha`; this release replaces the public dependency bootstrap.

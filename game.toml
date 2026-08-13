@@ -19,13 +19,13 @@ out_dir = "generated"
 window_title = "Syphon Filter 2 Recompiled"
 memcard_dir = "saves"
 bios_hle = false
-fast_boot = true
+fast_boot = false
 overlay_cache = true
 
 [video]
 renderer = "opengl"
-supersampling = 4
-antialiasing = true
+supersampling = 1
+antialiasing = false
 texture_filtering = "nearest"
 aspect_ratio = "4:3"
 pgxp = false
