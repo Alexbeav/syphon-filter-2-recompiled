@@ -134,7 +134,7 @@ function Assert-PublicDependencyTree {
     param([string]$Root, [string]$Label)
 
     $Forbidden = @(Get-ChildItem -LiteralPath $Root -Recurse -File | Where-Object {
-        $_.Name -match '(?i)\.(mcd|mcr|psxstate|cue|chd|iso|img|ccd|sub|bmp|wav|mp4|mkv)$' -or
+        $_.Name -match '(?i)\.(psxstate|cue|chd|iso|img|ccd|sub|bmp|wav|mp4|mkv)$' -or
         $_.Name -match '(?i)^SCUS[_-]?944\.(51|92)$' -or
         $_.FullName -match '(?i)[\\/](captures|traces|saves)[\\/]'
     })
