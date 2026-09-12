@@ -154,3 +154,7 @@ noncommercial research, preservation, and private play with legally obtained
 inputs. Syphon Filter and its assets remain the property of their respective
 rights holders. See [LICENSE](LICENSE) and the notices bundled with each
 release.
+
+## Development history
+
+Older source and separate candidates are preserved as fixed tags. See [the archive and recovery instructions](docs/BRANCH_ARCHIVE.md).
