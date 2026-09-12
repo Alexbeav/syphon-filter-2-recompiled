@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
 import io
 import os
 import pathlib
@@ -296,11 +297,13 @@ class ReleaseAuditTests(unittest.TestCase):
             env["PATH"] = str(fake_bin) + os.pathsep + os.environ["SystemRoot"] + "\\System32"
             env["SF2_SETUP_DISABLE_STANDARD_DISCOVERY"] = "1"
             env["SF2_SETUP_TEST_MODE"] = "1"
+            future = datetime.datetime.now() + datetime.timedelta(days=2)
             for key, (prefix, names) in fixtures.items():
                 archive = root / f"{key.lower()}.zip"
                 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
                     for name in names:
-                        zf.writestr(f"{prefix}/{name}", b"fixture")
+                        entry = zipfile.ZipInfo(f"{prefix}/{name}", future.timetuple()[:6])
+                        zf.writestr(entry, b"fixture")
                 env[f"SF2_SETUP_TEST_{key}_ARCHIVE"] = str(archive)
                 env[f"SF2_SETUP_TEST_{key}_SHA256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
 
@@ -318,6 +321,9 @@ class ReleaseAuditTests(unittest.TestCase):
             self.assertTrue((root / "recomp-ui" / ".sf2-artifact-sha256").is_file())
             self.assertTrue((root / "toolchain" / "SDL3-3.4.10" /
                              ".sf2-artifact-sha256").is_file())
+            repaired = root / "psxrecomp-src" / "runtime" / "runtime.cmake"
+            self.assertLessEqual(repaired.stat().st_mtime, datetime.datetime.now().timestamp() + 2)
+            self.assertIn("future-dated build files", result.stdout)
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"),
                          "Windows PowerShell is unavailable")
@@ -340,6 +346,29 @@ class ReleaseAuditTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("ASCII-only path", result.stdout)
+            self.assertNotIn("== 0/7 prepare build tools ==", result.stdout)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"),
+                         "Windows PowerShell is unavailable")
+    def test_setup_rejects_whitespace_in_kit_path_before_tool_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp) / "SF2 Kit (1)"
+            root.mkdir()
+            setup = pathlib.Path(__file__).parents[1] / "release" / "SETUP.ps1"
+            shutil.copy2(setup, root / "SETUP.ps1")
+            env = os.environ.copy()
+            env["SF2_SETUP_DISABLE_STANDARD_DISCOVERY"] = "1"
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-File", str(root / "SETUP.ps1"),
+                 "-DependenciesOnly", "-NoInstallDependencies"],
+                check=False, text=True, encoding="utf-8", errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("kit folder path contains a space", result.stdout)
+            self.assertIn(r"C:\SF2Kit", result.stdout)
+            self.assertIn("You do not need to reinstall anything", result.stdout)
             self.assertNotIn("== 0/7 prepare build tools ==", result.stdout)
 
 

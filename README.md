@@ -24,6 +24,9 @@ game. It contains the compiler/runtime tools and this project's verified
 recipe, but no executable containing SF2 code.
 
 1. Download `syphon-filter-2-recompiled-kit-windows-x64.zip` from Releases.
+   Extract the whole kit into an ASCII path without spaces, such as `C:\SF2Kit`.
+   Setup checks this before downloading tools because the bundled compiler
+   cannot build from a kit path containing spaces. Disc paths may contain spaces.
 2. Put your legally obtained SCUS-94451 Disc 1 `.cue`/`.bin` files beside the
    extracted kit files. Disc 2 may be present too.
 3. Double-click `SETUP.bat`. It auto-detects Disc 1, downloads pinned and
@@ -49,6 +52,9 @@ personal paths, and attach it to an issue instead of reconstructing terminal
 messages from memory. Existing compatible Python and MinGW installations are
 reused when detected; otherwise isolated verified copies are placed inside
 the extracted kit.
+
+Setup also adjusts future-dated build files to the current local time so a
+clock difference cannot leave the build waiting on impossible timestamps.
 
 To acquire and verify every public dependency before adding a disc, run:
 

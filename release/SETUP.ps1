@@ -376,6 +376,41 @@ function Assert-AsciiLauncherPath {
     }
 }
 
+function Assert-SafeKitPath {
+    param([string]$Path)
+
+    Assert-AsciiLauncherPath $Path "The extracted kit path"
+    if ($Path -match '\s') {
+        throw "The extracted kit folder path contains a space: $Path. The bundled compiler cannot build from paths with spaces. Move the entire extracted folder to C:\SF2Kit, then double-click SETUP.bat again. Do not move individual files. You do not need to reinstall anything."
+    }
+}
+
+function Repair-FutureBuildTimestamps {
+    param([string[]]$Paths)
+
+    $Now = Get-Date
+    $FutureCutoff = $Now.AddSeconds(2)
+    $Adjusted = 0
+    foreach ($Path in $Paths) {
+        if (-not (Test-Path -LiteralPath $Path)) { continue }
+        $Item = Get-Item -LiteralPath $Path
+        $Files = if ($Item.PSIsContainer) {
+            Get-ChildItem -LiteralPath $Path -Recurse -File
+        } else {
+            @($Item)
+        }
+        foreach ($File in $Files) {
+            if ($File.LastWriteTime -gt $FutureCutoff) {
+                $File.LastWriteTime = $Now
+                $Adjusted++
+            }
+        }
+    }
+    if ($Adjusted) {
+        Write-Host "Adjusted $Adjusted future-dated build files for this PC's clock." -ForegroundColor Yellow
+    }
+}
+
 function Show-ToolSummary {
     param($Tools)
     $PythonLabel = $Tools.Python.File
@@ -407,6 +442,13 @@ trap {
     exit 1
 }
 
+if (-not $ResolveCueOnly) {
+    # WinLibs derives unquoted internal linker paths from its installation
+    # prefix. Fail before tool discovery/download when that prefix would
+    # contain whitespace; disc paths may still contain spaces.
+    Assert-SafeKitPath $Kit
+}
+
 if ($PreflightOnly -or $DependenciesOnly) {
     $Tools = Resolve-SetupTools $Mingw
     $Missing = @(Get-MissingToolNames $Tools)
@@ -428,6 +470,7 @@ if ($PreflightOnly -or $DependenciesOnly) {
     Show-ToolSummary $Tools
     if ($DependenciesOnly) {
         Install-PinnedSources
+        Repair-FutureBuildTimestamps @($Framework, $RecompUi, $SdlRoot)
         Write-Host "Pinned dependency closure is ready." -ForegroundColor Green
     }
     if ($TranscriptStarted) { Stop-Transcript | Out-Null }
@@ -462,7 +505,6 @@ if ($ResolveCueOnly) {
 
 # play.bat is deliberately ASCII+CRLF for cmd.exe compatibility. Reject paths
 # that would otherwise be silently replaced with '?' before doing a long build.
-Assert-AsciiLauncherPath $Kit "The extracted kit path"
 Assert-AsciiLauncherPath $CuePath "The Disc 1 CUE path"
 
 Write-Host "== 0/7 prepare build tools =="
@@ -505,6 +547,7 @@ Install-PinnedSources
 
 Write-Host "== 2/7 verify offline launcher and SDL source closure =="
 Write-Host "All build sources are hash-verified and ready inside this kit." -ForegroundColor Green
+Repair-FutureBuildTimestamps @($Framework, $RecompUi, $SdlRoot)
 
 Write-Host "== 3/7 extract and verify SCUS_944.51 from your Disc 1 =="
 New-Item -ItemType Directory -Force $InputDir | Out-Null
@@ -537,6 +580,15 @@ try {
 
 Write-Host "== 6/7 build the native runtime and PSXRecomp launcher =="
 Write-Host "Using $BuildJobs parallel build jobs (override with -BuildJobs 1..64)."
+Repair-FutureBuildTimestamps @(
+    (Join-Path $Kit "CMakeLists.txt"),
+    (Join-Path $Kit "src"),
+    (Join-Path $Kit "mods"),
+    $Framework,
+    $RecompUi,
+    $SdlRoot,
+    $GeneratedDir
+)
 & $Tools.Mingw.CMake -S $Kit -B $BuildDir -G Ninja `
     -DCMAKE_BUILD_TYPE=Release `
     "-DCMAKE_C_COMPILER=$($Tools.Mingw.Gcc -replace '\\','/')" `
