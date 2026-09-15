@@ -376,6 +376,36 @@ function Assert-AsciiLauncherPath {
     }
 }
 
+function Invoke-LoggedNative {
+    param(
+        [Parameter(Mandatory)][scriptblock]$Command,
+        [Parameter(Mandatory)][string]$FailureMessage
+    )
+
+    # Native tools report their real errors on stderr, and Start-Transcript
+    # does not record that stream. A failed build therefore left setup.log
+    # holding nothing but the step header, while the failure message told the
+    # player to attach that log. Merge stderr into stdout so the reason is
+    # preserved.
+    #
+    # $ErrorActionPreference is "Stop" for this script, and under that setting
+    # Windows PowerShell promotes the first redirected stderr line to a
+    # terminating NativeCommandError. That would abort setup on a harmless
+    # compiler warning, so the redirect runs with it relaxed and the exit code
+    # remains the only success test.
+    $Previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Command 2>&1 | ForEach-Object { "$_" }
+    } finally {
+        $ErrorActionPreference = $Previous
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (exit $LASTEXITCODE). The tool output above is also in setup.log."
+    }
+}
+
 function Assert-SafeKitPath {
     param([string]$Path)
 
@@ -562,8 +592,9 @@ New-Item -ItemType Directory -Force (Join-Path $Framework "generated") | Out-Nul
 $BiosTool = Join-Path $Kit "psxrecomp-cli\libexec\psxrecomp-bios.exe"
 Push-Location $Framework
 try {
-    & $BiosTool --config bios/OpenBIOS.toml
-    if ($LASTEXITCODE -ne 0) { throw "BIOS recompilation failed" }
+    Invoke-LoggedNative -FailureMessage "BIOS recompilation failed" -Command {
+        & $BiosTool --config bios/OpenBIOS.toml
+    }
 } finally {
     Pop-Location
 }
@@ -572,8 +603,9 @@ Write-Host "== 5/7 recompile the resident game executable =="
 $GameTool = Join-Path $Kit "psxrecomp-cli\libexec\psxrecomp-game.exe"
 Push-Location $Kit
 try {
-    & $GameTool --config game.toml
-    if ($LASTEXITCODE -ne 0) { throw "game recompilation failed" }
+    Invoke-LoggedNative -FailureMessage "game recompilation failed" -Command {
+        & $GameTool --config game.toml
+    }
 } finally {
     Pop-Location
 }
@@ -589,20 +621,22 @@ Repair-FutureBuildTimestamps @(
     $SdlRoot,
     $GeneratedDir
 )
-& $Tools.Mingw.CMake -S $Kit -B $BuildDir -G Ninja `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DCMAKE_C_COMPILER=$($Tools.Mingw.Gcc -replace '\\','/')" `
-    "-DCMAKE_CXX_COMPILER=$($Tools.Mingw.Gxx -replace '\\','/')" `
-    "-DCMAKE_MAKE_PROGRAM=$($Tools.Mingw.Ninja -replace '\\','/')" `
-    "-DPSXRECOMP_ROOT=$($Framework -replace '\\','/')" `
-    "-DRECOMP_UI_ROOT=$($RecompUi -replace '\\','/')" `
-    "-DFETCHCONTENT_SOURCE_DIR_SDL3=$($SdlRoot -replace '\\','/')" `
-    "-DPSX_PYTHON=$($BuildPython -replace '\\','/')" `
-    -DPSX_DEBUG_TOOLS=ON `
-    -DPSX_RECOMP_UI=ON
-if ($LASTEXITCODE -ne 0) { throw "runtime configuration failed" }
-& $Tools.Mingw.CMake --build $BuildDir --target psx-runtime --parallel $BuildJobs
-if ($LASTEXITCODE -ne 0) { throw "runtime build failed" }
+Invoke-LoggedNative -FailureMessage "runtime configuration failed" -Command {
+    & $Tools.Mingw.CMake -S $Kit -B $BuildDir -G Ninja `
+        -DCMAKE_BUILD_TYPE=Release `
+        "-DCMAKE_C_COMPILER=$($Tools.Mingw.Gcc -replace '\\','/')" `
+        "-DCMAKE_CXX_COMPILER=$($Tools.Mingw.Gxx -replace '\\','/')" `
+        "-DCMAKE_MAKE_PROGRAM=$($Tools.Mingw.Ninja -replace '\\','/')" `
+        "-DPSXRECOMP_ROOT=$($Framework -replace '\\','/')" `
+        "-DRECOMP_UI_ROOT=$($RecompUi -replace '\\','/')" `
+        "-DFETCHCONTENT_SOURCE_DIR_SDL3=$($SdlRoot -replace '\\','/')" `
+        "-DPSX_PYTHON=$($BuildPython -replace '\\','/')" `
+        -DPSX_DEBUG_TOOLS=ON `
+        -DPSX_RECOMP_UI=ON
+}
+Invoke-LoggedNative -FailureMessage "runtime build failed" -Command {
+    & $Tools.Mingw.CMake --build $BuildDir --target psx-runtime --parallel $BuildJobs
+}
 
 Write-Host "== 7/7 stage private inputs and write launcher =="
 $BuildSaves = Join-Path $BuildDir "saves"
