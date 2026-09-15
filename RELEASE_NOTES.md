@@ -1,26 +1,32 @@
-# v0.1.2-alpha
+# v0.1.3-alpha
 
-Setup-reliability update for the complete two-disc Syphon Filter 2 (USA)
-campaign. Game behavior and the accepted optional Mods are unchanged from
-`v0.1.1-alpha`; this release replaces the public dependency bootstrap.
+Setup-reliability update. Game behavior, the accepted optional Mods, and the
+recompiled output are unchanged from `v0.1.1-alpha` and `v0.1.2-alpha`. This
+release only changes how `SETUP.bat` handles failure and what it tells you
+when it happens.
 
-This revision adds the shared PSXRecomp graphical launcher and a double-click
-setup path. `SETUP.bat` auto-detects a neighboring Disc 1 CUE even when Disc 2
-is also present, auto-detects PATH/MSYS2 MinGW toolchains, builds locally, and
-opens the launcher. Later runs use `play.bat`.
+Two problems made a failed setup impossible to diagnose, and both appeared
+together in a single report.
 
-The setup bootstrap uses no WinGet, Git, pip, or Visual Studio. Missing WinLibs
-and Python runtimes plus the pinned PSXRecomp, launcher, and SDL sources are
-downloaded directly into the kit, SHA-256 verified before extraction, and
-bounded by explicit download and extraction timeouts.
-Native runtime compilation now defaults to four parallel jobs, preventing
-memory pressure from turning a first build into an opaque stage-6 failure.
+**Install paths containing a space are now rejected before any work starts.**
+The bundled MinGW toolchain cannot build from such a path. Setup previously
+verified the disc, regenerated the OpenBIOS backend and recompiled the game —
+roughly ten minutes — and only then failed at stage 6 with nothing to act on.
+It now checks the kit path up front and names the remedy: move the whole
+extracted folder somewhere without spaces, such as `C:\SF2Kit`, and run
+`SETUP.bat` again. Nothing needs reinstalling.
 
-Mouse Look, Widescreen (16:9), and PGXP are now independent Mods and all
-default to disabled. The Controls page supports two bindings per retail PAD
-control, Mouse1--Mouse5, and immediate same-launch persistence.
+**Native tool output now reaches `setup.log`.** `Start-Transcript` records
+stdout but not stderr, so CMake, Ninja and the recompiler tools reported their
+real errors to the console only. A failed build left the log holding the stage
+header and `SETUP FAILED: runtime configuration failed` with nothing between
+them — while that same message asked you to attach the log. The four native
+tool calls now merge stderr into the transcript, and the failure message
+carries the tool's exit code.
 
-Included:
+If setup fails now, `setup.log` contains the reason.
+
+Included: unchanged from `v0.1.2-alpha`.
 
 - statically recompiled resident executable;
 - compatibility interpreter for uncovered streamed overlays;
@@ -32,7 +38,7 @@ Included:
 - memory-card persistence;
 - bundled MIT-licensed OpenBIOS.
 
-Known limitations:
+Known limitations: unchanged from `v0.1.2-alpha`.
 
 - broader public regression coverage across both discs is still wanted;
 - high-refresh interpolation is not included; gameplay uses retail cadence;
@@ -48,6 +54,7 @@ game executable: the player supplies SCUS-94451 Disc 1 as the build input and
 their Disc 2 for the second half of the game, while the kit uses the
 MIT-licensed OpenBIOS and extracts, verifies, recompiles, and builds locally.
 
-Release qualification includes a clean-room setup from the packaged kit and a
-rapid-start route with repeated movie skips, immediate briefing exit, player
-ownership, and movement. Framework tests pass 54/54.
+This release carries no gameplay change over `v0.1.2-alpha` and inherits its
+playthrough qualification. The setup changes were verified directly: the
+transcript now retains a failing tool's stderr and exit code, which the
+previous code path dropped.

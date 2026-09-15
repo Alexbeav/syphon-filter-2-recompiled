@@ -13,7 +13,7 @@ a PlayStation hardware runtime. Its launcher offers optional native 16:9,
 PGXP-assisted geometry, and direct mouse camera control while keeping retail
 gameplay, scripts, collision, saves, AI, and the 20 Hz world update.
 
-This is a **recompilation, not a decompilation**, and `v0.1.2-alpha` is not a
+This is a **recompilation, not a decompilation**, and `v0.1.3-alpha` is not a
 finished PC port. The project does not contain or distribute the game disc, a
 Sony BIOS, extracted assets, generated game C, saves, or overlay captures.
 
